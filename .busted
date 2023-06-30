@@ -1,0 +1,33 @@
+local fuzz = {
+	tags = "fuzz";
+	["exclude-tags"] = "";
+}
+local no_fuzz = {}
+
+local string_ = {
+	ROOT = {"test/string_spec.lua"}
+}
+
+local table_ = {
+	ROOT = {"test/table_spec.lua"}
+}
+
+return {
+	_all = {
+		["exclude-tags"] = "fuzz";
+		lpath = "./test/?.lua";
+		pattern = ".*_spec.lua";
+		ROOT = {"test"};
+	};
+	default = no_fuzz;
+	all = fuzz;
+	fuzz = fuzz;
+	no_fuzz = no_fuzz;
+	string = string_;
+	table = table_;
+	math = math_;
+	coroutine = coroutine_;
+	io = io_;
+	os = os_;
+	debug = debug_;
+}
