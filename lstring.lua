@@ -7,25 +7,127 @@ local function list_iter(tab,i,...)
    return i+1,v
 end
 local pairs_iter = next -- no way (as far as I know) to do this in lua
+-- !(
+-- local err_enabled = false
+-- local eval = evaluate
+-- local function errorm(n)
+--    if err_enabled then
+--       return "error("..n..")"
+--    else
+--       return ""
+--    end   
+-- end
+-- local function typecheck(var,pos,name,typ)
+--    if not err_enabled then return "" end
+--    typ=eval(typ)
+--    if type(typ)=="string" then
+--       return "if type("..var..")~="..toLua(typ).." then "..errorm("\"bad argument #"..eval(pos).." to '"..eval(name).."' ("..typ.." expected, got \"..("..var.."==nil and \"no value\" or type(var))..\")\"").." end"
+--    elseif type(typ)=="table" then
+--       outputLua("if ")
+--       for i,v in next, typ do
+--          if i~=1 then
+--             outputLua("and ")
+--          end
+--          outputLua("type("..var..")~="..toLua(v).." ")
+--       end
+--       outputLua("then ")
+--       outputLua(errorm("\"bad argument #"..pos.." to '"..eval(name).."' ("..typ[1].." expected, got \"..("..var.."==nil and \"no value\" or type("..var.."))..\")\""))
+--       outputLua(" end")
+--    end
+-- end
+-- --print(typecheck('ab',1,'nonexist','{"number","string"}'))
+-- )
+
+local function typecast(var,type_)
+   local vartype = type(var)
+   if vartype==type_ then return true,var end
+   if vartype=="string" then
+      if type_=="number" then
+         local new = tonumber(var)
+         if new then
+            return true, new
+         else
+            return false, nil
+         end
+      end
+   elseif vartype=="number" then
+      if type_=="string" then
+         return true, tostring(var)
+      end
+   end
+   return false, nil
+end
 local function typecheck(var,pos,name,typ)
    if type(typ)=="string" then
       if type(var)~=typ then
-         error("bad argument #"..pos.." to '"..name.."' ("..typ.." expected, got "..(var==nil and "no value" or type(var))..")")
+         error("bad argument #"..pos.." to '"..name.."' ("..typ.." expected, got "..(var==nil and "no value" or type(var))..")",3)
       end
    elseif type(typ)=="table" then
       local mat = false
-      for _,v in list_iter,typ do
+      for _,v in next,typ do
          if type(var)==v then mat=true;break end
       end
       if not mat then
-         error("bad argument #"..pos.." to '"..name.."' ("..typ[1].." expected, got "..(var==nil and "no value" or type(var))..")")
+         error("bad argument #"..pos.." to '"..name.."' ("..typ[1].." expected, got "..(var==nil and "no value" or type(var))..")",3)
       end
    end
 end
-local function unimpl(s)
-   return function()
-      error("'"..s.."' is unimplemented")
+local function typecheckv(name,types,...)
+   local can_cast = types.implicit_casting
+   local nargs,args = select('#',...),{...}
+   local ret = {}
+   for i,v in next,types do
+      if type(i)=="number" then
+         local val = args[i]
+         local type_ = type(val)
+         local is_none = i>nargs and val==nil
+         local required = not v.optional
+         if v.custom then
+            local success,reason = v[1](val,type_,is_none,(can_cast and typecast) or nil)
+            if required and success==nil then
+               error('bad argument #'..i.." to '"..name.."'"..(reason~=nil and " ("..reason..")" or ""),3)
+            end
+            if success~=nil then
+               val=success
+            end
+         else
+            local matched,bad_typecast = false,false
+            if not is_none then
+               for ti,b in next,v do
+                  --print('awlcast',typecast(val,b))
+                  if type(ti)=="number" and (type_==b or can_cast) then
+                  	  if can_cast then
+                  	     local s,r = typecast(val,b)
+                  	     --print('cast',s,r)
+                  	     val=r
+                  	     if not s then
+                  	        bad_typecast=true;break
+                  	     end
+                  	  end
+                  	  matched=true;break
+                  end
+               end
+            end
+            --print(matched,required,bad_typecast)
+            if not matched then
+               if required or bad_typecast then
+                  error("bad argument #"..i.." to '"..name.."' ("..v[1].." expected, got "..(is_none and 'no value' or type_)..")",3)
+               elseif v.default and is_none then
+                  val=v.default
+               end
+            end
+         end
+         ret[i]=val
+      end
    end
+   return unpack(ret)
+end
+
+
+local function unimpl(s)
+   return (function()
+      error("'"..s.."' is unimplemented",2)
+   end)
 end
 local function find(a,b)
    for i,v in pairs_iter,a do
@@ -41,41 +143,52 @@ end
 
 local string = {}
 string.sub = ("").sub
-function string.upper(s)
-   typecheck(s,1,"upper",{"string","number"})
-   if type(s)=="number" then s=tostring(s) end
+function string.upper(...)
+   local s=typecheckv('upper',{
+      implicit_casting=true;
+      {'string'};
+   },...)
    local n = ""
    for i=1,#s do
       n=n..(upper_lookup[string.sub(s,i,i)] or string.sub(s,i,i))
    end
    return n
 end
-function string.lower(s)
-   typecheck(s,1,"lower",{"string","number"})
-   if type(s)=="number" then s=tostring(s) end
+function string.lower(...)
+   local s=typecheckv('lower',{
+      implicit_casting=true;
+      {"string"}
+   },...)
    local n = ""
    for i=1,#s do
       n=n..(find(upper_lookup,string.sub(s,i,i)) or string.sub(s,i,i))
    end
    return n
 end
-function string.reverse(s)
-   typecheck(s,1,"lower",{"string","number"})
-   if type(s)=="number" then s=tostring(s) end
+function string.reverse(...)
+   local s=typecheckv('reverse',{
+      implicit_casting=true;
+      {'string'}
+   },...)
    local n = ""
    for i=#s,1,-1 do
       n=n..string.sub(s,i,i)
    end
    return n
 end
-function string.len(s)
-   typecheck(s,1,'len',{"string","number"})
-   if type(s)=="number" then s=tostring(s) end
+function string.len(...)
+   local s=typecheckv('len',{
+      implicit_casting=true;
+      {'string'}
+   },...)
    return #s
 end
-function string.rep(s,a)
-   typecheck(s,1,'rep',{"string","number"})
-   typecheck(a,2,'rep','number')
+function string.rep(...)
+   local s,a=typecheckv('rep',{
+      implicit_casting=true;
+      {'string'};
+      {'number'};
+   },...)
    local n = ""
    for i=1,a do
       n=n..s
@@ -94,30 +207,18 @@ function string.char(...)
          end
          v=n
       end
-      if i>255 or i<0 then print("ERR",i); error("bad argument #"..i.." to 'char' (invalid value)") end
+      if i>255 or i<0 then error("bad argument #"..i.." to 'char' (invalid value)") end
       n=n..byte_lookup[v]
    end
    return n
 end
-function string.byte(str,index,amount)
-   typecheck(str,1,'byte',{'string','number'})
-   if type(str)=="number" then
-      str=tostring(str)
-   end
-   typecheck(index,2,'byte',{'number','string','nil'})
-   if type(index)=="string" then
-      local n=tonumber(index)
-      if n==nil then typecheck(index,2,'byte','number') end
-      index=n
-   end
-   typecheck(amount,3,'byte',{'number','string','nil'})
-   if type(amount)=="string" then
-      local n=tonumber(amount)
-      if n==nil then typecheck(amount,3,'byte','number') end
-      amount=n
-   end
-   if index==nil then index=1 end
-   if amount==nil then amount=1 end
+function string.byte(...)
+   local str,index,amount=typecheckv('byte',{
+      implicit_casting=true;
+      {'string'};
+      {'number',default=1,optional=true};
+      {'number',default=1,optional=true};
+   },...)
    str=string.sub(str,index,index+amount-1)
    local re = {}
    for i=1,#str do
@@ -125,445 +226,450 @@ function string.byte(str,index,amount)
    end
    return unpack(re)
 end
-function string.dump(f,strip)
-   typecheck(f,1,'dump','function')
-   typecheck(strip,2,'dump',{'boolean','nil'})
-   if strip==nil then strip=false end
+function string.dump(...)
+   local f,strip=typecheckv('dump',{
+      {'function'};
+      {'dump',optional=true,default=false};
+   },...)
    error('string.dump is unimplemented')
 end
 do
-   local get_cptr = require('cptr')
-   local pattern_classes = {
-      ["."]=(function()
-         local n = {}
-         for i=1,256 do
-            n[i+1]=i-1
+   if false then
+      local get_cptr = require('./cptr')
+      local pattern_classes = {
+         ["."]=(function()
+            local n = {}
+            for i=1,256 do
+               n[i+1]=i-1
+            end
+            return string.char(unpack(n))
+         end)();
+         ["a"]="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+         ["l"]="abcdefghijklmnopqrstuvwxyz";
+         ["u"]="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+         ["d"]="0123456789";
+         ["p"]="!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+         ["w"]="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+         ["s"]=" \v\t\r\n";
+         ["c"]="\0\1\2\3\4\5\6\7\8\9\10\11\12\13\14\15\16\17\18\19\20\21\22\23\24\25\26\27\28\29\30\31\127";
+         ["x"]="01233456789abcdefABCDEF";
+         ["z"]="\0";
+      }
+      -- translation from lstrlib.c's "PATTERN MATCHING" section
+      local CAP_UNFINISHED = -1
+      local CAP_POSITION = -2
+      local LUA_MAXCAPTURES = 5000
+      -- typedef struct MatchState {
+      --   const char *src_init;  /* init of source string */
+      --   const char *src_end;  /* end (`\0') of source string */
+      --   lua_State *L;
+      --   int level;  /* total number of captures (finished or unfinished) */
+      --   struct {
+      --     const char *init;
+      --     ptrdiff_t len;
+      --   } capture[LUA_MAXCAPTURES];
+      -- } MatchState;
+      --end
+      local L_ESC = "%"
+      local SPECIALS="^$*+?.([%-"
+      local match
+      local function check_capture(ms,l)
+         l=l-1
+         if l<0 or l>=ms.level or ms.capture[l].len == CAP_UNFINISHED then
+            error("invalid capture index")
          end
-         return string.char(unpack(n))
-      end)();
-      ["a"]="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      ["l"]="abcdefghijklmnopqrstuvwxyz";
-      ["u"]="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      ["d"]="0123456789";
-      ["p"]="!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-      ["w"]="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
-      ["s"]=" \v\t\r\n";
-      ["c"]="\0\1\2\3\4\5\6\7\8\9\10\11\12\13\14\15\16\17\18\19\20\21\22\23\24\25\26\27\28\29\30\31\127";
-      ["x"]="01233456789abcdefABCDEF";
-      ["z"]="\0";
-   }
-   -- translation from lstrlib.c's "PATTERN MATCHING" section
-   local CAP_UNFINISHED = -1
-   local CAP_POSITION = -2
-   local LUA_MAXCAPTURES = 5000
-   -- typedef struct MatchState {
-   --   const char *src_init;  /* init of source string */
-   --   const char *src_end;  /* end (`\0') of source string */
-   --   lua_State *L;
-   --   int level;  /* total number of captures (finished or unfinished) */
-   --   struct {
-   --     const char *init;
-   --     ptrdiff_t len;
-   --   } capture[LUA_MAXCAPTURES];
-   -- } MatchState;
-   --end
-   local L_ESC = "%"
-   local SPECIALS="^$*+?.([%-"
-   local match
-   local function check_capture(ms,l)
-      l=l-1
-      if l<0 or l>=ms.level or ms.capture[l].len == CAP_UNFINISHED then
-         error("invalid capture index")
+         return l
       end
-      return l
-   end
-   local function capture_to_close(ms)
-      for i=1,ms.level do
-         if ms.capture[i].len==CAP_UNFINISHED then
-            error("invalid pattern capture")
+      local function capture_to_close(ms)
+         for i=1,ms.level do
+            if ms.capture[i].len==CAP_UNFINISHED then
+               error("invalid pattern capture")
+            end
          end
       end
-   end
-   local function classend(ms,p)
-      local p = -p
-      local nc = -p+1
-      if nc/L_ESC then
-         if p*0 then
-            error("malformed pattern (ends with %)")
-         end
-         return -p+1
-      elseif nc/"[" then
-         if p/"^" then p=p+1 end
-         while not p/"]" do
+      local function classend(ms,p)
+         local p = -p
+         local nc = -p+1
+         if nc/L_ESC then
             if p*0 then
-               error("malformed pattern (missing ])")
+               error("malformed pattern (ends with %)")
             end
-            if (-p-1)/L_ESC and not p*0 then
-               p=p+1
+            return -p+1
+         elseif nc/"[" then
+            if p/"^" then p=p+1 end
+            while not p/"]" do
+               if p*0 then
+                  error("malformed pattern (missing ])")
+               end
+               if (-p-1)/L_ESC and not p*0 then
+                  p=p+1
+               end
             end
-         end
-         return p+1
-      else
-         return p
-      end
-   end
-   local function islower(c)
-      return upper_lookup[c]~=nil
-   end
-   local function match_class(c,cl)
-      local lcl,res = string.lower(cl)
-      if     lcl=='a' then res = isalpha(c);
-      elseif lcl=='c' then res = iscntrl(c); 
-      elseif lcl=='d' then res = isdigit(c); 
-      elseif lcl=='l' then res = islower(c); 
-      elseif lcl=='p' then res = ispunct(c); 
-      elseif lcl=='s' then res = isspace(c); 
-      elseif lcl=='u' then res = isupper(c); 
-      elseif lcl=='w' then res = isalnum(c); 
-      elseif lcl=='x' then res = isxdigit(c); 
-      elseif lcl=='z' then res = (c == 0);
-      else
-         return (cl/c);
-      end
-      if islower(cl) then
-         return res
-      else
-         return not res
-      end
-   end
-   local function matchbracketclass(c,p,ce)
-      local sig = true
-      if (-p+1)/"^" then
-         sig = false
-      end
-      while ((-p+1).p < ec) do
-         if (p/L_ESC) then
-            p=p+1
-            if match_class(c,tostring(p)) then
-               return sig
-            end
-         elseif (((-p+1)/"-") and ((-p+2).p < ec)) then
-            p=p+2
-            if -p-2 <= c and c <= p then
-               return sig
-            end
-         elseif p/c then
-            return sig
+            return p+1
+         else
+            return p
          end
       end
-      return not sig
-   end
-   local function singlematch(c,p,ep)
-      print("singlematch",c,p,ep)
-      if p/"." then
-         return 1
-      elseif p/L_ESC then
-         return match_class(c,-p+1)
-      elseif p/"[" then
-         return matchbracketclass(c,p,-ep-1)
-      else
-         return p/tostring(c)
+      local function islower(c)
+         return upper_lookup[c]~=nil
       end
-   end
-   local function matchbalance(ms,s,p)
-      if p*0 or (-p+1)*0 then
-         error("unbalanced pattern")
-      end
-      if not s/p then
-         return nil
-      else
-         local b = -p;
-         local e = -p+1;
-         local cont = 1
-         while ((-s+1).p < #ms.src_end) do
-            if (s/e) then
-               if (cont-1 == 0) then return s+1 end
-            elseif s/b then
-               cont=cont+1
-            end
+      local function match_class(c,cl)
+         local lcl,res = string.lower(cl)
+         if     lcl=='a' then res = isalpha(c);
+         elseif lcl=='c' then res = iscntrl(c);
+         elseif lcl=='d' then res = isdigit(c);
+         elseif lcl=='l' then res = islower(c);
+         elseif lcl=='p' then res = ispunct(c);
+         elseif lcl=='s' then res = isspace(c);
+         elseif lcl=='u' then res = isupper(c);
+         elseif lcl=='w' then res = isalnum(c);
+         elseif lcl=='x' then res = isxdigit(c);
+         elseif lcl=='z' then res = (c == 0);
+         else
+            return (cl/c);
          end
-      end
-      return nil
-   end
-   local function max_expand(ms,s,p,ep)
-      print("max_expand",ms,s,p,ep)
-      DBG()
-      local i = 1
-      while ((-s+i).p < ms.src_end and singlematch(-s+i,p,ep)) do
-         i=i+1
-      end
-      while (i>=0) do
-         local res = match(ms,-s-i,-ep)
-         if res then return res end
-         i=i-1
-      end
-      return nil
-   end
-   local function min_expand(ms,s,p,ep)
-      print("min_expand",ms,s,p,ep)
-      while true do
-         local res = match(ms,s,ep+1)
-         if res~=nil then
+         if islower(cl) then
             return res
-         elseif (s.p<ms.src_end and singlematch(s,p,ep)) then
-            s=s+1
+         else
+            return not res
+         end
+      end
+      local function matchbracketclass(c,p,ce)
+         local sig = true
+         if (-p+1)/"^" then
+            sig = false
+         end
+         while ((-p+1).p < ec) do
+            if (p/L_ESC) then
+               p=p+1
+               if match_class(c,tostring(p)) then
+                  return sig
+               end
+            elseif (((-p+1)/"-") and ((-p+2).p < ec)) then
+               p=p+2
+               if -p-2 <= c and c <= p then
+                  return sig
+               end
+            elseif p/c then
+               return sig
+            end
+         end
+         return not sig
+      end
+      local function singlematch(c,p,ep)
+         --print("singlematch",c,p,ep)
+         if p/"." then
+            return 1
+         elseif p/L_ESC then
+            return match_class(c,-p+1)
+         elseif p/"[" then
+            return matchbracketclass(c,p,-ep-1)
+         else
+            return p/tostring(c)
+         end
+      end
+      local function matchbalance(ms,s,p)
+         if p*0 or (-p+1)*0 then
+            errorm("unbalanced pattern")
+         end
+         if not s/p then
+            return nil
+         else
+            local b = -p;
+            local e = -p+1;
+            local cont = 1
+            while ((-s+1).p < #ms.src_end) do
+               if (s/e) then
+                  if (cont-1 == 0) then return s+1 end
+               elseif s/b then
+                  cont=cont+1
+               end
+            end
+         end
+         return nil
+      end
+      local function max_expand(ms,s,p,ep)
+         --print("max_expand",ms,s,p,ep)
+         --DBG()
+         local i = 1
+         while ((-s+i).p < ms.src_end and singlematch(-s+i,p,ep)) do
+            i=i+1
+         end
+         while (i>=0) do
+            local res = match(ms,-s-i,-ep)
+            if res then return res end
+            i=i-1
+         end
+         return nil
+      end
+      local function min_expand(ms,s,p,ep)
+         --print("min_expand",ms,s,p,ep)
+         while true do
+            local res = match(ms,s,ep+1)
+            if res~=nil then
+               return res
+            elseif (s.p<ms.src_end and singlematch(s,p,ep)) then
+               s=s+1
+            else
+               return nil
+            end
+         end
+      end
+      local function start_capture(ms,s,p,what)
+         local level = ms.level;
+         if level >= LUA_MAXCAPTURES then
+            error("too many captures")
+         end
+         ms.capture[level].init = s.p
+         ms.capture[level].len = what
+         ms.level=ms.level+1
+         local res=match(ms,s,p)
+         if (res==nil) then
+            ms.level=ms.level-1
+         end
+         return res
+      end
+      local function end_capture(ms,s,p)
+         local l = capture_to_close(ms)
+         ms.capture[l].len = s-ms.capture[l].init;
+         local res = match(ms,s,p)
+         if res == nil then
+            ms.capture[l].len = CAP_UNFINISHED
+         end
+         return res
+      end
+      local function match_capture(ms,s,l)
+         l = check_capture(ms,l)
+         local len = ms.capture[l].len
+         if (ms.src_end-s.p >= len and string.sub(s.s,ms.capture[l].init) == string.sub(s.s,len)) then
+            return s+len
          else
             return nil
          end
       end
-   end
-   local function start_capture(ms,s,p,what)
-      local level = ms.level;
-      if level >= LUA_MAXCAPTURES then
-         error("too many captures")
-      end
-      ms.capture[level].init = s.p
-      ms.capture[level].len = what
-      ms.level=ms.level+1
-      local res=match(ms,s,p)
-      if (res==nil) then
-         ms.level=ms.level-1
-      end
-      return res
-   end
-   local function end_capture(ms,s,p)
-      local l = capture_to_close(ms)
-      ms.capture[l].len = s-ms.capture[l].init;
-      local res = match(ms,s,p)
-      if res == nil then
-         ms.capture[l].len = CAP_UNFINISHED
-      end
-      return res
-   end
-   local function match_capture(ms,s,l)
-      l = check_capture(ms,l)
-      local len = ms.capture[l].len
-      if (ms.src_end-s.p >= len and string.sub(s.s,ms.capture[l].init) == string.sub(s.s,len)) then
-         return s+len
-      else
-         return nil
-      end
-   end
-   function match(ms,s,p)
-      local p=-p
-      print('match',tostring(p),tostring(s))
-      if p/"(" then
-         if (-p+1)/")" then
-            return start_capture(ms,s,-p+2,CAP_POSITION)
-         else
-            return start_capture(ms,s,-p+1,CAP_UNFINISHED)
-         end
-      elseif p/")" then
-         return end_capture(ms,s,-p+1)
-      elseif p==L_ESC then
-         local n = -p+1
-         if n/"b" then
-            s=matchbalance(ms,s,-p+2)
-            if s==nil then return s end
-            p=p+4
-            print("submatch-b")
-            return match(ms,s,p)
-         elseif n/"f" then
-            local ep,previous
-            p=p+2
-            if not p/"[" then
-               error("missing [ after %f in pattern")
-            end
-            ep = classend(ms,p)
-            if s.p==ms.src_init then
-               previous=""
+      function match(ms,s,p)
+         local p=-p
+         -- print('match',tostring(p),tostring(s))
+         if p/"(" then
+            if (-p+1)/")" then
+               return start_capture(ms,s,-p+2,CAP_POSITION)
             else
-               previous=tostring(-s-1)
+               return start_capture(ms,s,-p+1,CAP_UNFINISHED)
             end
-            if matchbracketclass(previous,p,ep-1) or not matchbracketclass(tostring(s),p,ep-1) then
-               return nil
+         elseif p/")" then
+            return end_capture(ms,s,-p+1)
+         elseif p==L_ESC then
+            local n = -p+1
+            if n/"b" then
+               s=matchbalance(ms,s,-p+2)
+               if s==nil then return s end
+               p=p+4
+               -- print("submatch-b")
+               return match(ms,s,p)
+            elseif n/"f" then
+               local ep,previous
+               p=p+2
+               if not p/"[" then
+                  error("missing [ after %f in pattern")
+               end
+               ep = classend(ms,p)
+               if s.p==ms.src_init then
+                  previous=""
+               else
+                  previous=tostring(-s-1)
+               end
+               if matchbracketclass(previous,p,ep-1) or not matchbracketclass(tostring(s),p,ep-1) then
+                  return nil
+               end
+               p=ep
+               -- print("submatch-f")
+               return match(ms,s,ep)
+            else
+               if isdigit(tostring(-p+1)) then
+                  s=match_capture(ms,s,tostring(-p+1))
+                  if s==nil then return nil end
+                  p=p+1
+                  -- print("submatch-%"..tostring(-p+1))
+                  return match(ms,s,p)
+               end
+               dflt=true
             end
-            p=ep
-            print("submatch-f")
-            return match(ms,s,ep)
+         elseif p*0 then
+            return s
+         elseif p/"$" then
+            if ((-p+1)*0) then
+               if s*0 then
+                  return s
+               else
+                  return nil
+               end
+            else
+               dflt=true
+            end
          else
-            if isdigit(tostring(-p+1)) then
-               s=match_capture(ms,s,tostring(-p+1))
-               if s==nil then return nil end
-               p=p+1
-               print("submatch-%"..tostring(-p+1))
+            dflt=true
+         end
+         DBG()
+         if dflt then
+            -- print("dflt classend param",-p+1)
+            local ep = classend(ms,-p+1)
+            local m = (s.p<ms.src_end and singlematch(s,p,ep))
+            -- print("dflt ep,m",ep,m)
+            if ep/"?" then
+               local res = match(ms,s+1,ep+1)
+               if m and res~=nil then
+                  return res
+               end
+               p=ep+1
+               -- print("dflt-submatch-optional")
+               return match(ms,s,p)
+            elseif ep/"*" then
+               return max_expand(ms,s,p,ep)
+            elseif ep/"+" then
+               if m then
+                  return max_expand(ms,s+1,p,ep)
+               else
+                  return nil
+               end
+            elseif ep/"-" then
+               return min_expand(ms,s,p,ep)
+            else
+               if not m then
+                  return nil
+               end
+               s=s+1
+               p=ep
+               -- print("dflt-submatch-fallthrough")
                return match(ms,s,p)
             end
-            dflt=true
          end
-      elseif p*0 then
-         return s
-      elseif p/"$" then
-         if ((-p+1)*0) then
-            if s*0 then
-               return s
+      end
+      local function plain_search(l1,l2,init)
+         if #l1<#l2 then return false end
+         for i=(init or 1),#l1 do
+            if string.sub(l1,i,i+#l2-1)==l2 then
+               return i
+            end
+         end
+         return false
+      end
+      local function push_onecapture(ms,i,s,e)
+         if s==nil then s=0 end
+         if (i>=ms.level) then
+            if i==0 then
+               return true,s,e-s
             else
-               return nil
+               error("invalid capture index ("..i..","..ms.level..")")
             end
          else
-            dflt=true
-         end
-      else
-         dflt=true
-      end
-      DBG()
-      if dflt then
-         print("dflt classend param",-p+1)
-         local ep = classend(ms,-p+1)
-         local m = (s.p<ms.src_end and singlematch(s,p,ep))
-         print("dflt ep,m",ep,m)
-         if ep/"?" then
-            local res = match(ms,s+1,ep+1)
-            if m and res~=nil then
-               return res
+            local l = ms.capture[i].len
+            if l==CAP_UNFINISHED then
+               error("unfinished capture")
             end
-            p=ep+1
-            print("dflt-submatch-optional")
-            return match(ms,s,p)
-         elseif ep/"*" then
-            return max_expand(ms,s,p,ep)
-         elseif ep/"+" then
-            if m then
-               return max_expand(ms,s+1,p,ep)
+            if l==CAP_POSITION then
+               return false,ms.capture[i].init-ms.src_init+1
             else
-               return nil
-            end
-         elseif ep/"-" then
-            return min_expand(ms,s,p,ep)
-         else
-            if not m then
-               return nil
-            end
-            s=s+1
-            p=ep
-            print("dflt-submatch-fallthrough")
-            return match(ms,s,p)
-         end
-      end
-   end
-   local function plain_search(l1,l2,init)
-      if #l1<#l2 then return false end
-      for i=(init or 1),#l1 do
-         if string.sub(l1,i,i+#l2-1)==l2 then
-            return i
-         end
-      end
-      return false
-   end
-   local function push_onecapture(ms,i,s,e)
-      if s==nil then s=0 end
-      if (i>=ms.level) then
-         if i==0 then
-            return true,s,e-s
-         else
-            error("invalid capture index ("..i..","..ms.level..")")
-         end
-      else
-         local l = ms.capture[i].len
-         if l==CAP_UNFINISHED then
-            error("unfinished capture")
-         end
-         if l==CAP_POSITION then
-            return false,ms.capture[i].init-ms.src_init+1
-         else
-            return true,ms.capture[i].init,l
-         end
-      end
-   end
-   local function push_captures(ms,s,e)
-      local nlevels = (ms.level==0 and s) and 0 or ms.level
-      local n = {}
-      for i=0,nlevels do
-         local vs={push_onecapture(ms,i,s,e)}
-         print(i,unpack(vs))
-         for si=2,#vs do
-            n[#n+1]=vs[si]
-         end
-      end
-      return unpack(n)
-   end
-   local function string_contains(a,b,init)
-      for i=1,#a do
-         local c1 = string.sub(a,i,i)
-         for si=1,#b do
-            if string.sub(b,si,si) == c1 then
-               return true
+               return true,ms.capture[i].init,l
             end
          end
       end
-      return false
-   end
-   local function str_find_aux(l1,l2,init,raw,find)
-      if init==nil or init < 0 then
-         init=1
-      elseif init>#l1 then
-         init=#l1
-      end
-      local s = get_cptr(l1,1)
-      local p = get_cptr(l2,1)
-      if (find and (raw or not string_contains(l2,SPECIALS))) then
-         local s2 = plain_search(l1,l2,init)
-         if s2 then
-            return s2-s.p,s2-s.p+#l2-1 -- this part works
+      local function push_captures(ms,s,e)
+         local nlevels = (ms.level==0 and s) and 0 or ms.level
+         local n = {}
+         for i=0,nlevels do
+            local vs={push_onecapture(ms,i,s,e)}
+            -- print(i,unpack(vs))
+            for si=2,#vs do
+               n[#n+1]=vs[si]
+            end
          end
-      else
-         local ms = {}
-         local anchor = p/"^" and p+1
-         local s1 = -s+init
-         ms.src_init = s.p
-         ms.src_end = s.p+#l1
-         ms.capture = {}
-         while ((s1+1).p < ms.src_end and not anchor) do
-            ms.level = 0
-            local res = match(ms,s1,p)
-            if res~=nil then
-               print('foun',find)
-               if (find) then
-                  print('epc',push_captures(ms,nil,0))
-                  return s1.p-s.p+1,res.p-s.p+1 --,push_captures(ms,nil,0)
-               else
-                  local va = {push_captures(ms,s1.p,res.p)}
-                  print('va',unpack(va))
-                  return string.sub(l1,unpack(va))
+         return unpack(n)
+      end
+      local function string_contains(a,b,init)
+         for i=1,#a do
+            local c1 = string.sub(a,i,i)
+            for si=1,#b do
+               if string.sub(b,si,si) == c1 then
+                  return true
                end
             end
          end
+         return false
       end
-      return nil
+      local function str_find_aux(l1,l2,init,raw,find)
+         if init==nil or init < 0 then
+            init=1
+         elseif init>#l1 then
+            init=#l1
+         end
+         local s = get_cptr(l1,1)
+         local p = get_cptr(l2,1)
+         if (find and (raw or not string_contains(l2,SPECIALS))) then
+            local s2 = plain_search(l1,l2,init)
+            if s2 then
+               return s2-s.p,s2-s.p+#l2-1 -- this part works
+            end
+         else
+            local ms = {}
+            local anchor = p/"^" and p+1
+            local s1 = -s+init
+            ms.src_init = s.p
+            ms.src_end = s.p+#l1
+            ms.capture = {}
+            while ((s1+1).p < ms.src_end and not anchor) do
+               ms.level = 0
+               local res = match(ms,s1,p)
+               if res~=nil then
+                  -- print('foun',find)
+                  if (find) then
+                     -- print('epc',push_captures(ms,nil,0))
+                     return s1.p-s.p+1,res.p-s.p+1 --,push_captures(ms,nil,0)
+                  else
+                     local va = {push_captures(ms,s1.p,res.p)}
+                     -- print('va',unpack(va))
+                     return string.sub(l1,unpack(va))
+                  end
+               end
+            end
+         end
+         return nil
+      end
    end
    string.gfind = unimpl('gfind')
    string.gmatch = unimpl('gmatch')
    string.gsub = unimpl('gsub')
-   function string.find(s,pattern,init,raw)
-      typecheck(s,1,'find',{"string","number"})
-      if type(s)=="number" then s=tostring(s) end
-      typecheck(pattern,2,'find',{"string","number"})
-      if type(pattern)=="number" then pattern=tostring(pattern) end
-      typecheck(init,3,'find',{"number","string","nil"})
-      if type(init)=="string" then
-         local n = tonumber(init)
-         if n==nil then typecheck(init,3,'find',"number") end
-         init=ni
-      elseif init==nil then
-         init=1
-      end
-      typecheck(raw,4,'find',{"boolean","nil"})
-      return str_find_aux(s,pattern,init,raw,true)
-   end
-   function string.match(s,pattern,init)
-      typecheck(s,1,'match',{"string","number"})
-      if type(s)=="number" then s=tostring(s) end
-      typecheck(pattern,2,'match',"string") -- you BETTER not be passing a number as a pattern
-      typecheck(init,3,'match',{"number","string","nil"})
-      if type(init)=="string" then
-         local n = tonumber(init)
-         if n==nil then typecheck(init,3,'match',"number") end
-         init=ni
-      elseif init==nil then
-         init=1
-      end
-      return str_find_aux(s,pattern,init,nil,false)
-   end
+   string.find = unimpl('find')
+   string.match = unimpl('match')
+   string.format = unimpl('format')
+   -- function string.find(s,pattern,init,raw)
+   --    typecheck(s,1,'find',{"string","number"})
+   --    if type(s)=="number" then s=tostring(s) end
+   --    typecheck(pattern,2,'find',{"string","number"})
+   --    if type(pattern)=="number" then pattern=tostring(pattern) end
+   --    typecheck(init,3,'find',{"number","string","nil"})
+   --    if type(init)=="string" then
+   --       local n = tonumber(init)
+   --       if n==nil then typecheck(init,3,'find',"number") end
+   --       init=ni
+   --    elseif init==nil then
+   --       init=1
+   --    end
+   --    typecheck(raw,4,'find',{"boolean","nil"})
+   --    return str_find_aux(s,pattern,init,raw,true)
+   -- end
+   -- function string.match(s,pattern,init)
+   --    typecheck(s,1,'match',{"string","number"})
+   --    if type(s)=="number" then s=tostring(s) end
+   --    typecheck(pattern,2,'match',"string") -- you BETTER not be passing a number as a pattern
+   --    typecheck(init,3,'match',{"number","string","nil"})
+   --    if type(init)=="string" then
+   --       local n = tonumber(init)
+   --       if n==nil then typecheck(init,3,'match',"number") end
+   --       init=ni
+   --    elseif init==nil then
+   --       init=1
+   --    end
+   --    return str_find_aux(s,pattern,init,nil,false)
+   -- end
 end
-string.format = unimpl('format')
 return string
