@@ -156,7 +156,7 @@ function table.insert(...)
 end
 function table.remove(tab,index)
    typecheck(tab,1,'remove','table')
-   if rawequal(index,nil) then
+   if not rawequal(index,nil) then
       typecheck(index,2,'remove','number')
    else
       index=table.getn(tab)
