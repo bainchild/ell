@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-field, undefined-global
 local function desc()
    it("should pass Lua.org's 5.1 tests (sort.lua)",function()
       require('luaorg51_test_sort')
@@ -84,7 +85,7 @@ local function desc()
       assert.are.same({'a',1,'b',2,'c',3,'d',4},new)
       n = {[-1]='a',1,'b',2,'c',3,'d',4}
       new = {}
-      table.foreachi(n,function(i,v)
+      table.foreachi(n,function(_,v)
          new[#new+1]=v
       end)
       assert.are.same({1,'b',2,'c',3,'d',4},new)
@@ -131,6 +132,7 @@ local function desc()
       assert.are.equal("naw",table.concat({[4]='naw'},'',4,4))
       assert.are.equal("naw",table.concat({[-4]='naw'},'',-4,-4))
    end)
+   -- TODO: table.unpack(?)
    describe("fuzzing #fuzz",function()
       local fuzz = require('luzer').Fuzz
       pending("table.setn",function()end)

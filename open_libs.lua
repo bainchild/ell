@@ -13,6 +13,7 @@
 --       pcall(setfenv,i,_G)
 --    end
 -- end
+math = require('TODO_lmath') -- math should have no global dependencies.
 string = require('lstring')
 pcall(function()
    getmetatable("").__index = string

@@ -66,7 +66,7 @@ local function typecheckv(name,types,...)
                   	     local s,r = typecast(val,b)
                   	     --print('cast',s,r)
                   	     val=r
-                  	     if not s then            	          
+                  	     if not s then
                   	        bad_typecast=true;break
                   	     end
                   	  end
@@ -107,17 +107,16 @@ end
 -- (you'd have to use FiOne or similar.)
 
 -- speaking of...
-if INTERPRETER and INTERPRETER.can_load('constructor_hooks') then
-   INTERPRETER.load('constructor_hooks')
-   INTERPRETER.loaded.constructor_hooks.add_table('post',function(tab)
-      g.setmetatable(tab,table_mt)
-   end)
-end
+-- if INTERPRETER and INTERPRETER.can_load('constructor_hooks') then
+--    INTERPRETER.load('constructor_hooks')
+--    INTERPRETER.loaded.constructor_hooks.after('table',function(tab)
+--       g.setmetatable(tab,table_mt)
+--    end)
+-- end
 --
 local impl = {}
-for i,v in next,{
+for _,v in next,{
    "loadstring" -- TODO: use FiOne + yueliang to emulate this.
-   ""
 } do impl[v]=g[v] end
 function impl.setmetatable(...)
    local a,b = typecheckv('setmetatable',{

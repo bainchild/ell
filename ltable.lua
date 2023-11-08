@@ -5,9 +5,21 @@ local function list_iter(tab,i,...)
    if i==nil then i=0 end
    local v=tab[i+1]
    if v==nil then return v end
-   return i+1,v
+   return i+1,v,...
 end
 local pairs_iter = next -- no way (as far as I know) to do this in lua
+local function _unpack_r(list,start,en,count)
+   if count>=en or list[start+count]==nil then
+      return
+   end
+   if count+1>=8000 then error("too many results to unpack",count+3) end
+   return list[start+count],_unpack_r(list,start,en,count+1)
+end
+local function unpack(list,i,j)
+   if i==nil then i=1 end
+   if j==nil then j=2^16384 end -- (hopefully) saturates to inf
+   return _unpack_r(list,i,j,0)
+end
 
 local function typecast(var,type_)
    local vartype = type(var)
@@ -179,6 +191,8 @@ function table.concat(...)
    if end_==nil then end_=table.getn(tab) end
    local s=""
    for i=start,end_ do
+      -- * nil is already checked by typecheckv
+      ---@diagnostic disable-next-line: need-check-nil
       local v = tab[i]
       if i~=start then s=s..delim end
       if type(v)~="string" and type(v)~="number" then
@@ -237,6 +251,7 @@ function table.foreachi(...)
       {'function'};
    },...)
    for i,v in list_iter,tab do
+      ---@diagnostic disable-next-line: need-check-nil
       func(i,v)
    end
 end
@@ -246,7 +261,17 @@ function table.foreach(...)
       {'function'};
    },...)
    for i,v in pairs_iter,tab do
+      ---@diagnostic disable-next-line: need-check-nil
       func(i,v)
    end
+end
+function table.unpack(...)
+   local tab,i,j = typecheckv('unpack',{
+      implicit_casting=true;
+      {'table'};
+      {'number',optional=true};
+      {'number',optional=true};
+   },...)
+   return unpack(tab,i,j)
 end
 return table
