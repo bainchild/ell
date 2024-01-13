@@ -1,0 +1,16 @@
+-- actually possible, although at great cost.
+-- the implementation would include an env hook
+-- into full error prevention until the requested point
+-- to which then you would replace all the variables
+-- with their saved counterparts and continue as normal.
+-- So just a sandbox that saves the variables state
+-- for the next yield and can switch off error prevention to "resume" at
+-- a specific point.
+-- Error prevention is achieved through a "infective" environment
+-- where every operation on an object will yield another object
+-- which can be used to track variables. 
+
+-- Problems: Unsandboxed upvalues and builtins.
+-- can be remedied by interpreter hooks, although
+-- at that point you should just use those to do
+-- the yielding/resuming
